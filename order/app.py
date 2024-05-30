@@ -48,16 +48,11 @@ class Publisher(threading.Thread):
         while self.is_running:
             self.connection.process_data_events(time_limit=1)
 
-    def _publish(self, message):
-        message_dict = json.loads(message)
-        order_id = message_dict.get('args')[0]
-        order_entry: OrderValue = get_order_from_db(order_id)
-        user_id = order_entry.user_id  
-        queue = self.get_queue_for_order(user_id) ### TEMPORARILY CHANGED TO USER_ID
+    def _publish(self, message, queue):
         self.channel.basic_publish("", routing_key=str(queue), body=message.encode())
 
-    def publish(self, message):
-        self.connection.add_callback_threadsafe(lambda: self._publish(message))
+    def publish(self, message, queue):
+        self.connection.add_callback_threadsafe(lambda: self._publish(message, queue))
 
     def stop(self):
         print("Stopping...")
@@ -68,8 +63,15 @@ class Publisher(threading.Thread):
             self.connection.close()
         print("Stopped")
 
-    def get_queue_for_order(self, order_id):
-        return self.queues[int(hashlib.md5(order_id.encode()).hexdigest(), 16) % int(N_QUEUES)]
+    def get_queue_for_user_id(self, user_id):
+        return self.queues[int(hashlib.md5(user_id.encode()).hexdigest(), 16) % int(N_QUEUES)]
+
+    def get_queue_for_order_id(self, order_id):
+        """
+        Gets the queue for a given order_id by hashing the corresponding user_id from the database. 
+        """
+        order_entry: OrderValue = get_order_from_db(order_id)
+        return self.get_queue_for_user_id(order_entry.user_id)
 
 
 def create_connection():
@@ -197,7 +199,8 @@ def add_item_request(order_id: str, item_id: str, quantity: int):
             "function": "handle_add_item",
             "args": [order_id, item_id, quantity]
         })
-        publisher.publish(message)
+        queue = publisher.get_queue_for_order_id(order_id)
+        publisher.publish(message, queue)
         return jsonify({"success": "Item addition request sent"}), 200
     except Exception as e:
         print(e)
@@ -236,17 +239,16 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 def checkout_request(order_id: str):
     app.logger.debug(f"Initiating checkout for order {order_id}")
     try:
-        # # user_id from order
-        # order_entry: OrderValue = get_order_from_db(order_id)
-        # user_id = order_entry.user_id
-        # Create Message
+        order_entry: OrderValue = get_order_from_db(order_id)
+        if order_entry.paid or order_entry.items == []: # Order already paid or empty
+            return jsonify({"error": "Order already paid or empty"}), 400
         message = json.dumps({
-            "function": "handle_checkout",
-            "args": (order_id, )
+            'function': 'handle_checkout',
+            'args': [order_id, order_entry.user_id, order_entry.items, order_entry.total_cost]
         })
-
+        queue = publisher.get_queue_for_user_id(order_entry.user_id)
         # Publish Message
-        publisher.publish(message)
+        publisher.publish(message, queue)
 
         return jsonify({"success": "Checkout request sent"}), 202
     except Exception as e:

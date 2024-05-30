@@ -38,9 +38,9 @@ def handle_add_item(order_id, item_id, quantity):
         print("Failed to retrieve item details")
 
 
-def handle_checkout(order_id: str):
-    order_entry = requests.get(f"{GATEWAY_URL}/orders/find/{order_id}").json()
-    user_id, items, total_cost = order_entry["user_id"], order_entry["items"], order_entry["total_cost"]
+def handle_checkout(order_id: str, user_id: str, items: list, total_cost: int):
+    # order_entry = requests.get(f"{GATEWAY_URL}/orders/find/{order_id}").json()
+    # user_id, items, total_cost = order_entry["user_id"], order_entry["items"], order_entry["total_cost"]
     print(f"Handling checkout for {order_id}, {items}, User:{user_id}")
 
     # Calculate the quantity per item
@@ -53,7 +53,8 @@ def handle_checkout(order_id: str):
     try:
         # Subtract stock for each item
         for item_id, quantity in items_quantities.items():
-            stock_reply = requests.post(f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}")
+            inverse_quantity = -quantity
+            stock_reply = requests.post(f"{GATEWAY_URL}/stock/add/{item_id}/{inverse_quantity}")
             if stock_reply.status_code != 200:
                 rollback_stock(removed_items, order_id)
                 print(f"Out of stock on item_id: {item_id}")
@@ -75,7 +76,7 @@ def handle_checkout(order_id: str):
             print(f"Failed to update order status: {order_id}")
             return
 
-        print(f"Checkout handled successfully: {order_id}, calculated queue: {get_queue_for_order(order_id)}")
+        print(f"Checkout handled successfully: {order_id}, calculated queue: {get_queue_for_order(user_id)}")
 
     except Exception as e:
         rollback_stock(removed_items)
