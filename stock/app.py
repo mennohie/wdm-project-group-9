@@ -4,19 +4,18 @@ import atexit
 import uuid
 
 import redis
-
+import redis_lock
 from msgspec import msgpack, Struct
 from flask import Flask, jsonify, abort, Response
-
 
 DB_ERROR_STR = "DB error"
 
 app = Flask("stock-service")
 
-db: redis.Redis = redis.Redis(host=os.environ['REDIS_HOST'],
-                              port=int(os.environ['REDIS_PORT']),
-                              password=os.environ['REDIS_PASSWORD'],
-                              db=int(os.environ['REDIS_DB']))
+db: redis.Redis = redis.StrictRedis(host=os.environ['REDIS_HOST'],
+                                    port=int(os.environ['REDIS_PORT']),
+                                    password=os.environ['REDIS_PASSWORD'],
+                                    db=int(os.environ['REDIS_DB']))
 
 
 def close_db_connection():
@@ -96,17 +95,18 @@ def add_stock(item_id: str, amount: int):
 
 @app.post('/subtract/<item_id>/<amount>')
 def remove_stock(item_id: str, amount: int):
-    item_entry: StockValue = get_item_from_db(item_id)
-    # update stock, serialize and update database
-    item_entry.stock -= int(amount)
-    app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
-    if item_entry.stock < 0:
-        abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
-    try:
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+    with redis_lock.Lock(db, "subtract_lock"):
+        item_entry: StockValue = get_item_from_db(item_id)
+        # update stock, serialize and update database
+        item_entry.stock -= int(amount)
+        app.logger.debug(f"Item: {item_id} stock updated to: {item_entry.stock}")
+        if item_entry.stock < 0:
+            abort(400, f"Item: {item_id} stock cannot get reduced below zero!")
+        try:
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.RedisError:
+            return abort(400, DB_ERROR_STR)
+        return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
 
 
 if __name__ == '__main__':
