@@ -17,7 +17,7 @@ Inserting a sleep statement of ~10 seconds before the evaluation step will ensur
 
 
 ### Design decisions
-In this README we give an overview of our biggest design decision with more elaborate explanations in the wiki.
+In this README we give an overview of our biggest design decision with more elaborate explanations in the [wiki](https://github.com/mennohie/wdm24-team9/wiki).
 - We chose to use RabbitMQ as our message broker [Message broker](https://github.com/mennohie/wdm24-team9/wiki/Concept-Message-Broker). Due to using this message broker, we make the system more scalable using asynchronous communication.
 - The consumers in this system can be scaled horizontally. This means that we can add more consumers to the system to handle more messages. This is done by running multiple instances of the consumer.
 - We use [SAGAs](https://github.com/mennohie/wdm24-team9/wiki/Concept-SAGAS) to handle the transactions in the system. This allows us to combine the information from multiple services (payment and stock) to create a consistent state in the system. Publisher try to process the order step by step, if one step fails the publisher will send a message to rollback the previous steps.
