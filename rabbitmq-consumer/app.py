@@ -107,6 +107,7 @@ def handle_checkout(order_id: str):
             rollback_payment(user_id, total_cost)
         rollback_stock(removed_items, order_id)
         print(f"Failed to handle checkout: {str(e)}")
+        return False
 
 
 def rollback_payment(user_id: str, amount: int):
