@@ -37,13 +37,28 @@ def get_request(url):
     return response, response_json
 
 
+def post_request(url):
+    while True:
+        try:
+            response = requests.post(url)
+            if response.status_code == 400:
+                print("POST request returned status code 400")
+                return response
+        except requests.exceptions.ConnectionError:
+            print("Target service down. Trying again later...")
+            time.sleep(3)
+        else:
+            break
+    return response
+
+
 def handle_add_item(order_id, item_id, quantity):
     response, item_details = get_request(f"{GATEWAY_URL}/stock/find/{item_id.strip()}")
     if response.status_code == 200:
         item_details = response.json()
         price = int(item_details['price'])
 
-        add_response = requests.post(
+        add_response = post_request(
             f"{GATEWAY_URL}/orders/addItemProcess/{order_id.strip()}/{item_id.strip()}/{quantity.strip()}/{price}")
         if add_response.status_code == 200:
             print(f"Item {item_id} added {quantity} times successfully to order {order_id}")
@@ -71,7 +86,7 @@ def handle_checkout(order_id: str):
     paid = False
     try:
         # Try to pay
-        payment_reply = requests.post(f"{GATEWAY_URL}/payment/pay/{user_id}/{total_cost}")
+        payment_reply = post_request(f"{GATEWAY_URL}/payment/pay/{user_id}/{total_cost}")
         if payment_reply.status_code != 200:
             print(f"User out of credit: {user_id}")
             return True
@@ -80,7 +95,7 @@ def handle_checkout(order_id: str):
 
         # Subtract stock for each item
         for item_id, quantity in items_quantities.items():
-            stock_reply = requests.post(f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}")
+            stock_reply = post_request(f"{GATEWAY_URL}/stock/subtract/{item_id}/{quantity}")
             if stock_reply.status_code != 200:
                 if paid:
                     rollback_payment(user_id, total_cost)
@@ -91,7 +106,7 @@ def handle_checkout(order_id: str):
             removed_items.append((item_id, quantity))
 
         # Update order status to paid
-        order_update_reply = requests.post(f"{GATEWAY_URL}/orders/checkoutProcess/{order_id}")
+        order_update_reply = post_request(f"{GATEWAY_URL}/orders/checkoutProcess/{order_id}")
         if order_update_reply.status_code != 200:
             if paid:
                 rollback_payment(user_id, total_cost)
@@ -112,7 +127,7 @@ def handle_checkout(order_id: str):
 
 def rollback_payment(user_id: str, amount: int):
     print(f"Rolling back payment for user: {user_id}. Amount: {amount}")
-    response = requests.post(f"{GATEWAY_URL}/payment/add_funds/{user_id}/{amount}")
+    response = post_request(f"{GATEWAY_URL}/payment/add_funds/{user_id}/{amount}")
 
 
 def rollback_stock(removed_items: list, order_id: str):
@@ -122,7 +137,7 @@ def rollback_stock(removed_items: list, order_id: str):
         _, current_stock = get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
         current_stock = current_stock["stock"]
         print(f"Stock of {item_id} before rollback: {current_stock}")
-        response = requests.post(f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}")
+        response = post_request(f"{GATEWAY_URL}/stock/add/{item_id}/{quantity}")
         print(f"Rollback response: {response.status_code}")
         _, current_stock = get_request(f"{GATEWAY_URL}/stock/find/{item_id}")
         current_stock = current_stock["stock"]
