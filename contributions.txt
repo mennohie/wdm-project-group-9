@@ -1,0 +1,5 @@
+Daniel Chou: Implemented rabbitmq messaging and maintained wikis. 
+Menno Hielkema: Implemented fault tolerance, rabbitmq broker (publisher and consumer) and helped with queue sharding. 
+Harmen Kroon: Implemented item request tracking service. 
+Jan van der Meulen: Wrote the README, found the reason for the reason for the payment inconsistencies, 
+contributions to fault tolerance and implementation, and extensive debugging of queue sharding. 

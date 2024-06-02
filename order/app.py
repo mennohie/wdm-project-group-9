@@ -68,21 +68,18 @@ class Publisher(threading.Thread):
                 reply_to=reply_to))
 
     def connect(self):
-        counter = 10
-        while counter > 0:
+        while True:
             try:
                 if not self.connection or self.connection.is_closed:
                     parameters = pika.ConnectionParameters("rabbitmq", )
                     self.connection = pika.BlockingConnection(parameters)
                     for queue in self.queues:
                         self.channel.queue_declare(queue, durable=True)
+                return
             except Exception as e:
                 print(f"Failed to connect to RabbitMQ: {str(e)}")
                 time.sleep(5)
-                counter -= 1
                 self.connect()
-            if counter == 0:
-                raise Exception("Failed to connect to RabbitMQ after several attempts, dropping message...")
 
     def publish(self, message, queue, correlation_id="", reply_to=""):
         if not self.connection.is_open:
@@ -116,11 +113,10 @@ class Publisher(threading.Thread):
 
 
 def create_connection():
-    retries = 5
     queues = []
     for i in range(int(N_QUEUES)):
         queues.append(f"main_{i}")
-    while retries > 0:
+    while True:
         try:
             publisher = Publisher(queues)
             publisher.start()
@@ -128,15 +124,15 @@ def create_connection():
         except pika.exceptions.AMQPConnectionError as e:
             print(f"Connection failed: {e}, retrying...")
             time.sleep(5)
-            retries -= 1
-    raise Exception("Failed to connect to RabbitMQ after several attempts")
 
 
 # Initialize Publisher connection
 publisher = create_connection()
 
+
 class RequestStatus(Struct):
     status: str
+
 
 class Consumer(threading.Thread):
     def __init__(self, queue='status'):
@@ -177,9 +173,9 @@ class Consumer(threading.Thread):
             self.connection.close()
         print("Stopped")
 
+
 def create_status_connection():
-    retries = 5
-    while retries > 0:
+    while True:
         try:
             consumer = Consumer()
             consumer.start()
@@ -187,11 +183,11 @@ def create_status_connection():
         except pika.exceptions.AMQPConnectionError as e:
             print(f"Connection failed: {e}, retrying...")
             time.sleep(5)
-            retries -= 1
-    raise Exception("Failed to connect to RabbitMQ status queue after several attempts")
+
 
 # Initialize Consumer connection
 consumer = create_status_connection()
+
 
 def close_db_connection():
     db.close()
@@ -201,7 +197,10 @@ def cleanup():
     publisher.stop()
     consumer.stop()
 
+
 atexit.register(close_db_connection)
+
+
 #  atexit.register(cleanup)
 
 
@@ -224,6 +223,7 @@ def get_order_from_db(order_id: str) -> OrderValue | None:
         # if order does not exist in the database; abort
         abort(400, f"Order: {order_id} not found!")
     return entry
+
 
 def get_status_from_db(status_id: str) -> RequestStatus | None:
     try:

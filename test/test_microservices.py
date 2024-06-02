@@ -241,7 +241,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertIn('user_id', user)
 
         user_id: str = user['user_id']
-
         # create order in the order service and add item to the order
         order: dict = tu.create_order(user_id)
         self.assertIn('order_id', order)
@@ -295,7 +294,7 @@ class TestMicroservices(unittest.TestCase):
         credit: int = tu.find_user(user_id)['credit']
         self.assertEqual(credit, 15)
         stock: int = tu.find_item(item_id1)['stock']
-        self.assertEqual(stock, 15) # previously 15
+        self.assertEqual(stock, 15)
 
         checkout_response = tu.checkout_order(order_id)
         self.assertTrue(tu.status_code_is_success(checkout_response.status_code))
