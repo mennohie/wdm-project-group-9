@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import utils as tu
@@ -81,7 +82,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertIn('user_id', user)
 
         user_id: str = user['user_id']
-
         # create order in the order service and add item to the order
         order: dict = tu.create_order(user_id)
         self.assertIn('order_id', order)
@@ -110,8 +110,11 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(subtract_stock_response))
         stock_after_subtract: int = tu.find_item(item_id1)['stock']
         self.assertEqual(stock_after_subtract, 15)
+        stock_after_subtract2: int = tu.find_item(item_id2)['stock']
+        self.assertEqual(stock_after_subtract2, 0)
 
-        checkout_response = tu.checkout_order(order_id).status_code
+        checkout_response = tu.checkout_order(order_id)
+        checkout_response_status = checkout_response.status_code
         # self.assertTrue(tu.status_code_is_failure(checkout_response)) failure now mediated by rabbitmq-consumer
         time.sleep(0.01)
         stock_after_subtract: int = tu.find_item(item_id1)['stock']
@@ -143,6 +146,48 @@ class TestMicroservices(unittest.TestCase):
 
         credit: int = tu.find_user(user_id)['credit']
         self.assertEqual(credit, 5)
+
+    def test_request_status(self):
+        user: dict = tu.create_user()
+        self.assertIn('user_id', user)
+
+        user_id: str = user['user_id']
+
+        # create order in the order service and add item to the order
+        order: dict = tu.create_order(user_id)
+        self.assertIn('order_id', order)
+
+        order_id: str = order['order_id']
+
+        # add item to the stock service
+        item1: dict = tu.create_item(5)
+        self.assertIn('item_id', item1)
+        item_id1: str = item1['item_id']
+        add_stock_response = tu.add_stock(item_id1, 15)
+        self.assertTrue(tu.status_code_is_success(add_stock_response))
+
+        add_item_response = tu.add_item_to_order_with_response(order_id, item_id1, 1)
+        self.assertTrue(tu.status_code_is_success(add_item_response.status_code))
+        add_item_response_json = add_item_response.json()
+        self.assertIn('correlation_id', add_item_response_json)
+        add_item_request_id = add_item_response_json['correlation_id']
+
+        add_item_request_status = tu.find_request_status(add_item_request_id)
+        status_attribute = add_item_request_status.json()
+        self.assertIn(status_attribute['status'], ['Pending', 'Processed'])
+
+        # Expect Processed, but still Pending? Maybe other http requests need to be done manually
+        # time.sleep(5)
+        #
+        # Redo find_request_status
+
+        checkout_response = tu.checkout_order(order_id)
+        self.assertTrue(tu.status_code_is_success(checkout_response.status_code))
+        checkout_response_json = checkout_response.json()
+        checkout_request_id = checkout_response_json['correlation_id']
+
+        checkout_request_status = tu.find_request_status(checkout_request_id).json()
+        self.assertIn(checkout_request_status['status'], ['Pending', 'Processed'])
 
 
 if __name__ == '__main__':
