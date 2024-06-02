@@ -84,7 +84,7 @@ def find_item(item_id: str):
 
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    with redis_lock.Lock(db, "create_item"):
+    with redis_lock.Lock(db, "add_stock"):
         item_entry: StockValue = get_item_from_db(item_id)
         # update stock, serialize and update database
         item_entry.stock += int(amount)
