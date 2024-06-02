@@ -46,14 +46,15 @@ def get_item_from_db(item_id: str) -> StockValue | None:
 
 @app.post('/item/create/<price>')
 def create_item(price: int):
-    key = str(uuid.uuid4())
-    app.logger.debug(f"Item: {key} created")
-    value = msgpack.encode(StockValue(stock=0, price=int(price)))
-    try:
-        db.set(key, value)
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return jsonify({'item_id': key})
+    with redis_lock.Lock(db, "create_item"):
+        key = str(uuid.uuid4())
+        app.logger.debug(f"Item: {key} created")
+        value = msgpack.encode(StockValue(stock=0, price=int(price)))
+        try:
+            db.set(key, value)
+        except redis.exceptions.RedisError:
+            return abort(400, DB_ERROR_STR)
+        return jsonify({'item_id': key})
 
 
 @app.post('/batch_init/<n>/<starting_stock>/<item_price>')
@@ -83,14 +84,15 @@ def find_item(item_id: str):
 
 @app.post('/add/<item_id>/<amount>')
 def add_stock(item_id: str, amount: int):
-    item_entry: StockValue = get_item_from_db(item_id)
-    # update stock, serialize and update database
-    item_entry.stock += int(amount)
-    try:
-        db.set(item_id, msgpack.encode(item_entry))
-    except redis.exceptions.RedisError:
-        return abort(400, DB_ERROR_STR)
-    return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
+    with redis_lock.Lock(db, "create_item"):
+        item_entry: StockValue = get_item_from_db(item_id)
+        # update stock, serialize and update database
+        item_entry.stock += int(amount)
+        try:
+            db.set(item_id, msgpack.encode(item_entry))
+        except redis.exceptions.RedisError:
+            return abort(400, DB_ERROR_STR)
+        return Response(f"Item: {item_id} stock updated to: {item_entry.stock}", status=200)
 
 
 @app.post('/subtract/<item_id>/<amount>')
