@@ -82,7 +82,6 @@ class TestMicroservices(unittest.TestCase):
         self.assertIn('user_id', user)
 
         user_id: str = user['user_id']
-
         # create order in the order service and add item to the order
         order: dict = tu.create_order(user_id)
         self.assertIn('order_id', order)
@@ -119,7 +118,7 @@ class TestMicroservices(unittest.TestCase):
         # self.assertTrue(tu.status_code_is_failure(checkout_response)) failure now mediated by rabbitmq-consumer
         time.sleep(0.01)
         stock_after_subtract: int = tu.find_item(item_id1)['stock']
-        self.assertEqual(stock_after_subtract, 14)
+        self.assertEqual(stock_after_subtract, 15)
 
         add_stock_response = tu.add_stock(item_id2, 15)
         self.assertTrue(tu.status_code_is_success(int(add_stock_response)))
@@ -134,16 +133,16 @@ class TestMicroservices(unittest.TestCase):
         self.assertTrue(tu.status_code_is_success(int(add_credit_response)))
 
         credit: int = tu.find_user(user_id)['credit']
-        # self.assertEqual(credit, 5) # previously 15
+        self.assertEqual(credit, 15)
         stock: int = tu.find_item(item_id1)['stock']
-        self.assertEqual(stock, 14) # previously 15
+        self.assertEqual(stock, 15)
 
         checkout_response = tu.checkout_order(order_id)
         self.assertTrue(tu.status_code_is_success(checkout_response.status_code))
         time.sleep(0.01)
 
         stock_after_subtract: int = tu.find_item(item_id1)['stock']
-        self.assertEqual(stock_after_subtract, 13) # previously 14
+        self.assertEqual(stock_after_subtract, 14)
 
         credit: int = tu.find_user(user_id)['credit']
         self.assertEqual(credit, 5)
@@ -189,7 +188,6 @@ class TestMicroservices(unittest.TestCase):
 
         checkout_request_status = tu.find_request_status(checkout_request_id).json()
         self.assertIn(checkout_request_status['status'], ['Pending', 'Processed'])
-
 
 
 if __name__ == '__main__':
