@@ -57,9 +57,15 @@ class Publisher(threading.Thread):
                     self.restart()
                 self.connect()
 
-    def _publish(self, message, queue):
-        self.channel.basic_publish("", routing_key=str(queue), body=message.encode(),
-                                   properties=pika.BasicProperties(delivery_mode=2, ))
+    def _publish(self, message, queue, correlation_id="", reply_to=""):
+        self.channel.basic_publish(
+            exchange="",
+            routing_key=str(queue),
+            body=message.encode(),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                correlation_id=correlation_id,
+                reply_to=reply_to))
 
     def connect(self):
         counter = 10
@@ -78,12 +84,12 @@ class Publisher(threading.Thread):
             if counter == 0:
                 raise Exception("Failed to connect to RabbitMQ after several attempts, dropping message...")
 
-    def publish(self, message, queue):
+    def publish(self, message, queue, correlation_id="", reply_to=""):
         if not self.connection.is_open:
             self.connect()
         while True:
             try:
-                self.connection.add_callback_threadsafe(lambda: self._publish(message, queue))
+                self.connection.add_callback_threadsafe(lambda: self._publish(message, queue, correlation_id, reply_to))
             except pika.exceptions.ConnectionClosed:
                 print("Connection closed, reconnecting...")
                 self.connect()
@@ -126,15 +132,77 @@ def create_connection():
     raise Exception("Failed to connect to RabbitMQ after several attempts")
 
 
-# Initialize connection
+# Initialize Publisher connection
 publisher = create_connection()
 
+class RequestStatus(Struct):
+    status: str
+
+class Consumer(threading.Thread):
+    def __init__(self, queue='status'):
+        super().__init__()
+        self.daemon = True
+        self.queue = queue
+        self.is_running = True
+
+        parameters = pika.ConnectionParameters("rabbitmq")
+        self.connection = pika.BlockingConnection(parameters)
+        self.channel = self.connection.channel()
+        self.channel.queue_declare(queue=self.queue, durable=True)
+
+    def run(self):
+        self.channel.basic_consume(queue=self.queue, on_message_callback=self.callback)
+        while self.is_running:
+            self.connection.process_data_events(time_limit=1)
+
+    def callback(self, ch, method, properties, body):
+        status_data = json.loads(body)
+        key = status_data['correlation_id']
+        status = status_data['status']
+
+        value = msgpack.encode(RequestStatus(status=status))
+        try:
+            db.set(key, value)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            app.logger.debug(f'Request {key} is updated to {status}')
+        except redis.exceptions.RedisError:
+            print(DB_ERROR_STR)
+            ch.basic_nack(delivery_tag=method.delivery_tag)
+
+    def stop(self):
+        print("Stopping...")
+        self.is_running = False
+        self.connection.process_data_events(time_limit=1)
+        if self.connection.is_open:
+            self.connection.close()
+        print("Stopped")
+
+def create_status_connection():
+    retries = 5
+    while retries > 0:
+        try:
+            consumer = Consumer()
+            consumer.start()
+            return consumer
+        except pika.exceptions.AMQPConnectionError as e:
+            print(f"Connection failed: {e}, retrying...")
+            time.sleep(5)
+            retries -= 1
+    raise Exception("Failed to connect to RabbitMQ status queue after several attempts")
+
+# Initialize Consumer connection
+consumer = create_status_connection()
 
 def close_db_connection():
     db.close()
 
 
+def cleanup():
+    publisher.stop()
+    consumer.stop()
+
 atexit.register(close_db_connection)
+#  atexit.register(cleanup)
 
 
 class OrderValue(Struct):
@@ -155,6 +223,20 @@ def get_order_from_db(order_id: str) -> OrderValue | None:
     if entry is None:
         # if order does not exist in the database; abort
         abort(400, f"Order: {order_id} not found!")
+    return entry
+
+def get_status_from_db(status_id: str) -> RequestStatus | None:
+    try:
+        entry: bytes = db.get(status_id)
+        app.logger.debug(f"get status from db: entry is {entry}")
+    except redis.exceptions.RedisError:
+        app.logger.debug(f"get status from db: entry is and error")
+        return abort(400, DB_ERROR_STR)
+    app.logger.debug(f"get status from db: entry is {entry}")
+    entry: RequestStatus | None = msgpack.decode(entry, type=RequestStatus) if entry else None
+    app.logger.debug(f"DECODED get status from db: entry is {entry}")
+    if entry is None:
+        abort(400, f"Status: {status_id} not found!")
     return entry
 
 
@@ -229,6 +311,7 @@ def send_get_request(url: str):
 
 @app.post('/addItem/<order_id>/<item_id>/<quantity>')
 def add_item_request(order_id: str, item_id: str, quantity: int):
+    correlation_id = str(uuid.uuid4())
     try:
         message = json.dumps({
             "function": "handle_add_item",
@@ -237,8 +320,10 @@ def add_item_request(order_id: str, item_id: str, quantity: int):
         queue = publisher.get_queue_for_order(publisher.get_user_id(order_id))
         if not publisher.connection.is_open:
             publisher.connect()
-        publisher.publish(message, queue)
-        return jsonify({"success": "Item addition request sent"}), 200
+        publisher.publish(message, queue, correlation_id, "status")
+        value = msgpack.encode(RequestStatus(status='Pending'))
+        db.set(correlation_id, value)
+        return jsonify({"success": "Item addition request sent", "correlation_id": correlation_id}), 200
     except Exception as e:
         print(e)
         return jsonify({"error": "Failed to add item", "details": str(e)}), 500
@@ -275,6 +360,7 @@ def rollback_stock(removed_items: list[tuple[str, int]]):
 @app.post('/checkout/<order_id>')
 def checkout_request(order_id: str):
     app.logger.debug(f"Initiating checkout for order {order_id}")
+    correlation_id = str(uuid.uuid4())
     try:
         # # user_id from order
         # order_entry: OrderValue = get_order_from_db(order_id)
@@ -287,9 +373,13 @@ def checkout_request(order_id: str):
 
         # Publish Message
         queue = publisher.get_queue_for_order(publisher.get_user_id(order_id))
-        publisher.publish(message, queue)
+        publisher.publish(message, queue, correlation_id, "status")
 
-        return jsonify({"success": "Checkout request sent"}), 202
+        # Store request status
+        value = msgpack.encode(RequestStatus(status='Pending'))
+        db.set(correlation_id, value)
+
+        return jsonify({"success": "Checkout request sent", "correlation_id": correlation_id}), 202
     except Exception as e:
         return jsonify({"error": "Failed to initiate checkout", "details": str(e)}), 500
 
@@ -314,13 +404,26 @@ def checkout_process(order_id: str):
     return Response("Checkout successful", status=200)
 
 
+@app.get('/status/<correlation_id>')
+def get_status(correlation_id: str):
+    app.logger.debug(f"GET request for {correlation_id}")
+    status_entry: RequestStatus = get_status_from_db(correlation_id)
+    app.logger.debug(f"GET request for {correlation_id} is {status_entry} ")
+    return jsonify(
+        {
+            "correlation_id": correlation_id,
+            "status": status_entry.status
+        }
+    ), 200
+
+
 # @app.post('/checkout/failed/<order_id>')
 # def checkout_failed(order_id: str):
 #     return jsonify({"error": "Checkout failed"}), 500
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=True, threaded=True)
 else:
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
