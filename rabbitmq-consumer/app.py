@@ -25,6 +25,9 @@ def get_request(url):
     while True:
         try:
             response = requests.get(url)
+            if response.status_code == 400:
+                print("GET request returned status code 400")
+                return response, {}
             response_json = response.json()
         except (requests.exceptions.JSONDecodeError, requests.exceptions.ConnectionError):
             print("Target service down. Trying again later...")
@@ -50,7 +53,8 @@ def handle_add_item(order_id, item_id, quantity):
                 f"Failed to add item to order, status code: {add_response.status_code}, response: {add_response.text}")
             return False
     else:
-        print("Failed to retrieve item details")
+        print("Failed to retrieve item details. Item might not exist.")
+        return True
 
 
 def handle_checkout(order_id: str):
