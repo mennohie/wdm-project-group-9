@@ -95,7 +95,20 @@
                         }
                     },
                     "response": []
-                }
+                },
+                {
+					"name": "Find Request Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/orders/status/{correlation_id}",
+							"host": ["{{baseUrl}}"],
+							"path": ["orders", "status", "{correlation_id}"]
+						}
+					},
+					"response": []
+				}
             ]
         },
         {
